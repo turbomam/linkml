@@ -1,9 +1,9 @@
 """Generate JSONld from a LinkML schema."""
 
 import os
-from collections.abc import Sequence
+from collections.abc import Sequence  # used to accept str | list | tuple
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import click
@@ -57,7 +57,7 @@ class JSONLDGenerator(Generator):
     original_schema: SchemaDefinition = None
     """See https://github.com/linkml/linkml/issues/871"""
 
-    context: str = None
+    context: Sequence[str] | None = field(default_factory=list)
     """Path to a JSONLD context file"""
 
     metamodel_context: str = None
@@ -158,7 +158,7 @@ class JSONLDGenerator(Generator):
     def visit_subset(self, ss: SubsetDefinition) -> None:
         self._visit(ss)
 
-    def end_schema(self, context: str | Sequence[str] | None = None, context_kwargs: dict | None = None, **_) -> str:
+    def end_schema(self, context: Sequence[str] = [], context_kwargs: dict | None = None, **_) -> str:
         default_context_kwargs = {"model": False}
         if context_kwargs is None:
             context_kwargs = default_context_kwargs
@@ -168,10 +168,13 @@ class JSONLDGenerator(Generator):
         self._add_type(self.schema)
         base_prefix = self.default_prefix()
 
+        # `context` can be a `str`, a `list[str]` or a `tuple[str]`
+        # since the context might need to get extended, `contexts` must be `list[str]`
+        contexts: list[str] = []
         # TODO: fix this, see https://github.com/linkml/linkml/issues/871
         # JSON LD adjusts context reference using '@base'.  If context is supplied and not a URI, generate an
         # absolute URI for it
-        if context is None and self.format == "jsonld":
+        if not context and self.format == "jsonld":
             # TODO: Once we get pyld running w/ relative contexts, we need to figure out how to generate and add
             #       the relative (?) context reference below
             # model_context = self.schema.source_file.replace('.yaml', '.prefixes.context.jsonld')
@@ -182,23 +185,26 @@ class JSONLDGenerator(Generator):
             add_prefixes = ContextGenerator(self.original_schema, **context_kwargs).serialize()
             add_prefixes_json = loads(add_prefixes)
             metamodel_ctx = self.metamodel_context or METAMODEL_CONTEXT_URI
-            context = [metamodel_ctx, add_prefixes_json["@context"]]
+            contexts = [metamodel_ctx, add_prefixes_json["@context"]]
         elif isinstance(context, str):  # Some of the older code doesn't do multiple contexts
-            context = [context]
+            contexts = [context]
         elif isinstance(context, tuple):
-            context = list(context)
+            contexts = list(context)
+        else:
+            contexts = context
+
         for imp in list(self.loaded.values())[1:]:
-            context.append(imp[0] + ".context.jsonld")
+            contexts.append(imp[0] + ".context.jsonld")
 
         # Absolute file paths have to have a prefix
-        for ci in range(0, len(context)):
-            if isinstance(context[ci], str) and context[ci].startswith(
+        for ci in range(0, len(contexts)):
+            if isinstance(contexts[ci], str) and contexts[ci].startswith(
                 "/"
             ):  # TODO: how do we deal with absolute DOS paths?
-                context[ci] = "file://" + context[ci]
+                contexts[ci] = "file://" + contexts[ci]
 
         if self.format == "jsonld":
-            self.schema["@context"] = context[0] if len(context) == 1 and not base_prefix else context
+            self.schema["@context"] = contexts[0] if len(contexts) == 1 and not base_prefix else contexts
             if base_prefix:
                 self.schema["@context"].append({"@base": base_prefix})
         # json_obj["@id"] = self.schema.id
@@ -206,9 +212,7 @@ class JSONLDGenerator(Generator):
         self.schema = self.original_schema
         return out
 
-    def serialize(
-        self, context: str | Sequence[str] | None = None, context_kwargs: dict | None = None, **kwargs
-    ) -> str:
+    def serialize(self, context: Sequence[str] | None = None, context_kwargs: dict | None = None, **kwargs) -> str:
         """
         Serialize the model to JSON-LD
 
@@ -220,11 +224,13 @@ class JSONLDGenerator(Generator):
         return super().serialize(context=context, context_kwargs=context_kwargs, **kwargs)
 
 
+# Option "context" can be specified multiple times.
 @shared_arguments(JSONLDGenerator)
 @click.command(name="jsonld")
 @click.option(
     "--context",
     multiple=True,
+    type=click.STRING,
     help=f"JSONLD context file (default: {METAMODEL_CONTEXT_URI} and <model>.prefixes.context.jsonld)",
 )
 @click.option(
@@ -249,9 +255,6 @@ def cli(yamlfile, context_kwargs: list[tuple[str, bool]], context: tuple[str], *
         context_kwargs = dict(context_kwargs)
     else:
         context_kwargs = {}
-
-    if not context:
-        context = None
 
     print(JSONLDGenerator(yamlfile, **kwargs).serialize(context=context, context_kwargs=context_kwargs, **kwargs))
 
