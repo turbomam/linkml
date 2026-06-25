@@ -246,17 +246,17 @@ class JSONLDGenerator(Generator):
     "multiple kwargs like `-k {key} {value}` can be passed",
 )
 @click.version_option(__version__, "-V", "--version")
-def cli(yamlfile, context_kwargs: list[tuple[str, bool]], context: tuple[str], **kwargs):
+def cli(yamlfile, context_kwargs: tuple[str, bool], context: tuple[str], **kwargs):
     """Generate JSONLD file from LinkML schema.
 
     Status: incomplete
     """
-    if context_kwargs:
-        context_kwargs = dict(context_kwargs)
-    else:
-        context_kwargs = {}
 
-    print(JSONLDGenerator(yamlfile, **kwargs).serialize(context=context, context_kwargs=context_kwargs, **kwargs))
+    print(
+        JSONLDGenerator(yamlfile, **kwargs).serialize(
+            context=context, context_kwargs={kwarg[0]: kwarg[1] for kwarg in context_kwargs}, **kwargs
+        )
+    )
 
 
 if __name__ == "__main__":
